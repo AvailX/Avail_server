@@ -36,6 +36,49 @@ const kalypsoConfig = {
 
 dotenv.config();
 
+// Initialize Redis client using environment variables
+const redisClient = new Redis({
+  host: process.env.REDIS_HOST,
+  port: parseInt(process.env.REDIS_PORT || "6379"),
+  password: process.env.REDIS_PASSWORD,
+});
+
+console.log("Redis running on port: ", process.env.REDIS_PORT)
+
+const rpcEndpoints = [process.env.RPC, process.env.RPC_2, process.env.RPC_3, process.env.RPC_4, process.env.RPC_5,];
+
+// Key in Redis to store the current RPC index
+const rpcIndexKey = 'currentRpcIndex';
+
+// Function to get the next RPC endpoint
+async function getNextRpcEndpoint(): Promise<string> {
+  // Get current index from Redis
+  let currentIndex = await redisClient.get(rpcIndexKey);
+  if (currentIndex === null) {
+    currentIndex = '0'; // Default to index 0 if not set
+  }
+
+  // Convert index from string to number
+  let index = parseInt(currentIndex, 10);
+  if (isNaN(index)) {
+    index = 0; // Fallback to index 0 if parsing fails
+  }
+
+  // Get the current endpoint based on the index
+  const endpoint = rpcEndpoints[index];
+
+  // Ensure endpoint is defined
+  if (!endpoint) {
+    throw new Error('No valid RPC endpoint found.');
+  }
+
+  // Calculate the next index and update in Redis
+  const nextIndex = (index + 1) % rpcEndpoints.length;
+  await redisClient.set(rpcIndexKey, nextIndex.toString());
+
+  return endpoint;
+}
+
 type createAskAndGetProofParams = {
   pub: any;
   sec: any;
@@ -88,7 +131,8 @@ const createAskAndGetProof = async (
     let input = createAskAndGetProofParams.pub;
     let secret = createAskAndGetProofParams.sec;
 
-    const provider = new ethers.JsonRpcProvider(process.env.RPC);
+    const rpc_endpoint = await getNextRpcEndpoint()
+    const provider = new ethers.JsonRpcProvider(rpc_endpoint);
     const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 
     console.log("using address", await wallet.getAddress());
@@ -183,15 +227,6 @@ export const getVersion = async (req: any, res: any) => {
     console.log(error);
   }
 };
-
-// Initialize Redis client using environment variables
-const redisClient = new Redis({
-  host: process.env.REDIS_HOST,
-  port: parseInt(process.env.REDIS_PORT || "6379"),
-  password: process.env.REDIS_PASSWORD,
-});
-
-console.log("Redis running on port: ", process.env.REDIS_PORT)
 
 // Fetching parameters for Rate Limiting
 const rateLimitWindowSeconds = parseInt(process.env.RATE_LIMIT_WINDOW || '3600', 10); // 1 hour in seconds
